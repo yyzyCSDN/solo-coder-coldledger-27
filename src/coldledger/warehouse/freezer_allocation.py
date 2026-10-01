@@ -11,11 +11,11 @@ def allocate(loads,slots,occupied):
         cand=[]
         for s in slots:
             if s.slot_id in result:continue
+            if s.zone!=load.zone:continue
             neighbor_loads={result[n] for n in s.neighbors if n in result}
-            zone_penalty=0 if s.zone==load.zone else 1
             if load.high_value and load.load_id in neighbor_loads:continue
             if load.redundancy and s.circuit in circuits.get(load.load_id,set()):continue
             cand.append(s)
-        if not cand:raise ValueError('no slot')
+        if not cand:raise ValueError(f'no slot for {load.load_id}')
         c=min(cand,key=lambda s:(sum(n in result for n in s.neighbors),s.slot_id));result[c.slot_id]=load.load_id;circuits.setdefault(load.load_id,set()).add(c.circuit)
     return result

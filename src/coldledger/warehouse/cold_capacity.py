@@ -49,7 +49,7 @@ def _score(d: PalletNeed, r: FreezerPool, remaining: Decimal) -> Decimal:
     return slack + group_penalty + risk_penalty - priority_credit
 
 
-def plan(demands: Iterable[PalletNeed], resources: Iterable[FreezerPool], allow_cross_group: bool = False) -> list[Allocation]:
+def plan(demands: Iterable[PalletNeed], resources: Iterable[FreezerPool]) -> list[Allocation]:
     ds = list(demands)
     rs = list(resources)
     if not rs and ds:
@@ -64,9 +64,13 @@ def plan(demands: Iterable[PalletNeed], resources: Iterable[FreezerPool], allow_
         candidates = []
         for rk, left in remaining.items():
             r = by_key[rk]
-            if left <= 0:
+            # zone eligibility, cold capacity and reserve form one hard
+            # constraint: a freezer outside the pallet's temperature zone
+            # cannot physically hold it, so there is no cross-group fallback
+            # (unlike the dock/carrier planners)
+            if r.group != d.group:
                 continue
-            if not allow_cross_group and r.group == d.group:
+            if left <= 0:
                 continue
             take = min(left, d.demand)
             if take <= 0:
@@ -107,6 +111,8 @@ def validate_plan(rows: Iterable[Allocation], demands: Iterable[PalletNeed], res
             raise ValueError("plan references unknown key")
         if row.quantity <= 0:
             raise ValueError("allocation must be positive")
+        if demand_map[row.demand_key].group != resource_map[row.resource_key].group:
+            raise ValueError("temperature zone mismatch")
         by_demand[row.demand_key] = by_demand.get(row.demand_key, Decimal("0")) + row.quantity
         by_resource[row.resource_key] = by_resource.get(row.resource_key, Decimal("0")) + row.quantity
     for key, d in demand_map.items():
@@ -131,7 +137,10 @@ def rebalance(rows: list[Allocation], disabled_resource: str, demands: list[Pall
         extra_reserve = reserved.get(r.key, Decimal("0"))
         adjusted_resources.append(replace(r, enabled=enabled, reserve=r.reserve + extra_reserve))
     retry = [d for d in demands if d.key in impacted]
-    return keep + plan(retry, adjusted_resources, allow_cross_group=True)
+    # migrate within the same temperature zone only; if the remaining
+    # in-zone capacity cannot hold the impacted batch, plan() raises and
+    # the original rows stay in force instead of leaving partial occupancy
+    return keep + plan(retry, adjusted_resources)
 
 
 def explain(rows: Iterable[Allocation]) -> list[str]:
